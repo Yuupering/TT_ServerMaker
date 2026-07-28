@@ -1,0 +1,39 @@
+{
+  "name": "tt-servermaker",
+  "version": "0.1.0",
+  "description": "원클릭 마인크래프트 서버 메이커",
+  "main": "./out/main/index.js",
+  "license": "MIT",
+  "author": "Yuupering",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Yuupering/TT_ServerMaker"
+  },
+  "private": true,
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "package": "electron-vite build && electron-builder --win",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json"
+  },
+  "dependencies": {
+    "yauzl": "^3.2.0",
+    "yazl": "^3.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/yauzl": "^2.10.3",
+    "@types/yazl": "^2.4.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "typescript": "^5.7.0",
+    "vite": "^7.3.6"
+  }
+}
