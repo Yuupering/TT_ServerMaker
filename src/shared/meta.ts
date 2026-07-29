@@ -7,7 +7,7 @@
 
 export const APP_NAME = 'TT_ServerMaker'
 export const APP_TITLE = '서버 메이커'
-export const APP_VERSION = '0.1.0'
+export const APP_VERSION = '0.2.0'
 export const APP_REPO = 'https://github.com/Yuupering/TT_ServerMaker'
 
 export const STUDIO = 'TT Studio'

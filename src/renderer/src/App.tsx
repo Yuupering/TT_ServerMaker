@@ -150,6 +150,19 @@ export default function App(): React.JSX.Element {
         instance={selected}
         status={status}
         onRefresh={() => void refresh()}
+        onJoinSelf={() => {
+          setJoinResult(null)
+          void window.api.join
+            .self(selected.id)
+            .then((r) => {
+              setJoinResult(r)
+              setView('join')
+            })
+            .catch(() => {
+              // 실패 사유는 참가 화면의 진행 상태로 표시된다
+              setView('join')
+            })
+        }}
         onBack={() => {
           setView('home')
           setSelectedId(null)

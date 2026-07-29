@@ -211,6 +211,12 @@ export interface AppSettings {
   backupKeep: number
   /** 참가 준비가 끝나면 공식 마인크래프트 런처를 알아서 띄울지 */
   autoOpenLauncher: boolean
+  /** 런처를 못 찾을 때 사용자가 직접 지정한 실행 파일 경로 */
+  launcherPath: string | null
+  /** 참가한 서버의 클라이언트에 줄 메모리 (Xms) */
+  clientMinMemoryMb: number
+  /** 참가한 서버의 클라이언트에 줄 메모리 (Xmx) */
+  clientMaxMemoryMb: number
 }
 
 export interface PlayerEntry {

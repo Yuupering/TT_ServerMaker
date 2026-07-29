@@ -1,4 +1,5 @@
-import { mkdir, readdir, writeFile } from 'node:fs/promises'
+import { access, mkdir, readdir, writeFile } from 'node:fs/promises'
+import { constants } from 'node:fs'
 import { join } from 'node:path'
 import type { LoaderType } from '@shared/types'
 import { downloadCached, fetchJson } from '../util/download'
@@ -103,6 +104,38 @@ async function installQuiltClient(
 
 /* ---------- Forge / NeoForge ---------- */
 
+/**
+ * 이미 설치된 버전 폴더를 찾는다.
+ *
+ * 설치 프로그램이 만드는 폴더 이름은 버전마다 규칙이 조금씩 달라서
+ * 정확한 이름을 미리 만들 수 없다. 그래서 종류·마크 버전·로더 버전이 모두 들어간
+ * 폴더 중에 version.json이 있는 것을 찾는다.
+ */
+async function findInstalledVersion(
+  kind: 'forge' | 'neoforge',
+  mcVersion: string,
+  loaderVersion: string
+): Promise<string | null> {
+  const entries = await readdir(paths.versions).catch(() => [] as string[])
+
+  const match = entries
+    .filter((e) => {
+      const lower = e.toLowerCase()
+      return lower.includes(kind) && e.includes(mcVersion) && e.includes(loaderVersion)
+    })
+    .sort()
+    .pop()
+
+  if (!match) return null
+
+  // 폴더만 있고 version.json이 없으면 설치가 중간에 끊긴 것이다
+  const ok = await access(versionJsonPath(match), constants.R_OK)
+    .then(() => true)
+    .catch(() => false)
+
+  return ok ? match : null
+}
+
 interface ForgePromos {
   promos: Record<string, string>
 }
@@ -155,6 +188,16 @@ async function installForgeClient(
     installerUrl = version.startsWith('1.20.1-')
       ? `https://maven.neoforged.net/releases/net/neoforged/forge/${version}/forge-${version}-installer.jar`
       : `https://maven.neoforged.net/releases/net/neoforged/neoforge/${version}/neoforge-${version}-installer.jar`
+  }
+
+  /*
+   * 이미 깔아둔 버전이면 설치 프로그램을 다시 돌리지 않는다.
+   * Forge 설치는 몇 분씩 걸리는데, 준비하기를 누를 때마다 그걸 반복할 이유가 없다.
+   */
+  const installed = await findInstalledVersion(kind, mcVersion, version)
+  if (installed) {
+    onStep?.(`${label} ${version}은 이미 준비돼 있습니다`)
+    return installed
   }
 
   onStep?.(`${label} ${version} 내려받는 중`)

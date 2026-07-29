@@ -25,6 +25,10 @@ export default function Join({ status, result, onResult, onBack }: Props): React
   const [busy, setBusy] = useState(false)
   const [launcherReady, setLauncherReady] = useState(true)
   const [autoOpen, setAutoOpen] = useState(true)
+  const [launcherFound, setLauncherFound] = useState(true)
+  const [minMem, setMinMem] = useState(1024)
+  const [maxMem, setMaxMem] = useState(4096)
+  const [memMax, setMemMax] = useState(8192)
 
   /*
    * 목록을 못 읽었을 때 빈 목록으로 넘기면 참가해둔 서버가 사라진 것처럼 보인다.
@@ -41,9 +45,18 @@ export default function Join({ status, result, onResult, onBack }: Props): React
   useEffect(() => {
     void refresh()
     void window.api.join.launcherAvailable().then(setLauncherReady).catch(() => setLauncherReady(false))
+    void window.api.join.launcherFound().then(setLauncherFound).catch(() => setLauncherFound(false))
     void window.api.settings
       .get()
-      .then((s) => setAutoOpen(s.autoOpenLauncher))
+      .then((s) => {
+        setAutoOpen(s.autoOpenLauncher)
+        setMinMem(s.clientMinMemoryMb)
+        setMaxMem(s.clientMaxMemoryMb)
+      })
+      .catch(() => undefined)
+    void window.api.system
+      .memory()
+      .then((m) => setMemMax(m.max))
       .catch(() => undefined)
     return window.api.events.onJoinedChanged(() => void refresh())
   }, [refresh])
@@ -73,6 +86,12 @@ export default function Join({ status, result, onResult, onBack }: Props): React
       cancelled = true
     }
   }, [code])
+
+  const saveMemory = useCallback(() => {
+    void window.api.settings
+      .set({ clientMinMemoryMb: minMem, clientMaxMemoryMb: maxMem })
+      .catch((e: Error) => setError(e.message))
+  }, [minMem, maxMem])
 
   const prepare = useCallback(
     async (invite: Invite) => {
@@ -155,12 +174,112 @@ export default function Join({ status, result, onResult, onBack }: Props): React
           </div>
         )}
 
+        {launcherReady && !launcherFound && (
+          <div className="card">
+            <h2>
+              마인크래프트 런처 위치 <span className="sub">실행 파일을 찾지 못했습니다</span>
+            </h2>
+            <div className="muted small" style={{ marginBottom: 12 }}>
+              스토어나 Xbox 앱으로 설치하면 흔치 않은 자리에 들어가서 못 찾는 경우가 있습니다.
+              런처 실행 파일을 골라주시면 다음부터 그 파일을 씁니다. 창에 끌어다 놓아도 됩니다.
+              <br />
+              스토어로 설치했다면 보통 C:\XboxGames\Minecraft Launcher\Content\Minecraft.exe 입니다.
+            </div>
+            <div
+              className="dropzone"
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault()
+                const file = e.dataTransfer.files[0]
+                if (!file) return
+                const path = window.api.addons.pathOf(file)
+                void window.api.join
+                  .setLauncherPath(path)
+                  .then(() => setLauncherFound(true))
+                  .catch((err: Error) => setError(err.message))
+              }}
+            >
+              여기에 런처 실행 파일을 끌어다 놓으세요
+            </div>
+            <button
+              className="btn"
+              style={{ marginTop: 10 }}
+              onClick={() =>
+                void window.api.join
+                  .pickLauncher()
+                  .then((p) => {
+                    if (p) setLauncherFound(true)
+                  })
+                  .catch((err: Error) => setError(err.message))
+              }
+            >
+              직접 찾아보기
+            </button>
+          </div>
+        )}
+
         {!launcherReady && (
           <div className="notice warn">
             공식 마인크래프트 런처를 찾지 못했습니다. 이 앱은 런처가 읽는 폴더에 모드팩을
             맞춰두는 방식이라, 런처를 설치하고 한 번 실행한 뒤에 쓸 수 있습니다.
           </div>
         )}
+
+        <div className="card">
+          <h2>
+            게임 메모리 <span className="sub">모드팩이 무거우면 늘려 주세요</span>
+          </h2>
+          <div className="muted small" style={{ marginBottom: 12 }}>
+            여기서 정한 값은 다음에 준비하는 서버부터 들어갑니다. 이미 준비한 서버에 적용하려면
+            그 서버를 한 번 더 준비하면 됩니다.
+          </div>
+
+          <div className="row">
+            <span style={{ minWidth: 96 }} className="muted small">
+              최대 (Xmx)
+            </span>
+            <input
+              type="range"
+              min={1024}
+              max={memMax}
+              step={512}
+              value={maxMem}
+              style={{ flex: 1 }}
+              onChange={(e) => {
+                const next = Number(e.target.value)
+                setMaxMem(next)
+                // 최소가 최대를 넘지 않게 같이 끌어내린다
+                if (minMem > next) setMinMem(next)
+              }}
+              onMouseUp={() => saveMemory()}
+              onKeyUp={() => saveMemory()}
+            />
+            <span style={{ minWidth: 66, textAlign: 'right' }}>{(maxMem / 1024).toFixed(1)}GB</span>
+          </div>
+
+          <div className="row" style={{ marginTop: 8 }}>
+            <span style={{ minWidth: 96 }} className="muted small">
+              최소 (Xms)
+            </span>
+            <input
+              type="range"
+              min={512}
+              max={maxMem}
+              step={512}
+              value={minMem}
+              style={{ flex: 1 }}
+              onChange={(e) => setMinMem(Number(e.target.value))}
+              onMouseUp={() => saveMemory()}
+              onKeyUp={() => saveMemory()}
+            />
+            <span style={{ minWidth: 66, textAlign: 'right' }}>{(minMem / 1024).toFixed(1)}GB</span>
+          </div>
+
+          <div className="muted small" style={{ marginTop: 10 }}>
+            이 PC에서 줄 수 있는 최대는 {(memMax / 1024).toFixed(1)}GB입니다. 전부 몰아주면 다른
+            프로그램이 느려지니 여유를 남기는 편이 좋습니다.
+          </div>
+        </div>
 
         <div className="card">
           <h2>초대 코드 넣기</h2>

@@ -1,6 +1,6 @@
 {
   "name": "tt-servermaker",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "원클릭 마인크래프트 서버 메이커",
   "main": "./out/main/index.js",
   "license": "MIT",

@@ -151,9 +151,15 @@ const api = {
     list: () => invoke<JoinedServer[]>('joined:list'),
     remove: (id: string) => invoke<void>('joined:remove', id),
     prepare: (invite: Invite) => invoke<JoinResult>('join:prepare', invite),
+    /** 내가 연 서버에 내가 들어갈 준비 */
+    self: (instanceId: string) => invoke<JoinResult>('join:self', instanceId),
     running: () => invoke<boolean>('join:running'),
     launcherAvailable: () => invoke<boolean>('launcher:available'),
-    openLauncher: () => invoke<void>('launcher:open')
+    /** 런처 실행 파일을 찾았는지 */
+    launcherFound: () => invoke<boolean>('launcher:found'),
+    openLauncher: () => invoke<void>('launcher:open'),
+    pickLauncher: () => invoke<string | null>('launcher:pick'),
+    setLauncherPath: (path: string) => invoke<string>('launcher:setPath', path)
   },
 
   events: {

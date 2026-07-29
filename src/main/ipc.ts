@@ -1,11 +1,13 @@
 import { BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { rm } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 import { PLUGIN_LOADERS } from '@shared/types'
 import { decodeInvite, encodeInvite } from '@shared/invite'
 import type {
   AppSettings,
   Invite,
+  JoinResult,
   CreateFromFileArgs,
   CreateFromModrinthArgs,
   CreateVanillaArgs,
@@ -303,29 +305,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
       )
     }
 
-    /*
-     * 플러그인 서버(Paper 등)는 참가자가 모드를 맞출 필요가 없다.
-     * 그래서 초대 코드에는 "순정으로 접속하면 된다"고 적어 보낸다.
-     */
-    const pluginServer = PLUGIN_LOADERS.includes(instance.loader.type)
-
-    const invite: Invite = {
-      name: instance.name,
-      address,
-      mcVersion: instance.mcVersion,
-      loader: pluginServer ? 'vanilla' : instance.loader.type,
-      loaderVersion: pluginServer ? null : instance.loader.version,
-      pack:
-        !pluginServer && instance.source.kind === 'modrinth' && instance.source.ref && instance.source.versionRef
-          ? {
-              source: 'modrinth',
-              projectId: instance.source.ref,
-              versionId: instance.source.versionRef,
-              title: instance.source.label
-            }
-          : null
-    }
-
+    const invite = inviteFor(instance, address)
     return { invite, code: encodeInvite(invite) }
   })
 
@@ -337,38 +317,61 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     emit.joinedChanged()
   })
   handle('launcher:available', () => hasOfficialLauncher())
+  /** 런처 실행 파일을 찾았는지. 못 찾으면 화면에서 직접 지정하게 안내한다 */
+  handle('launcher:found', async () => {
+    const settings = await getSettings()
+    return findOfficialLauncherExe(settings.launcherPath) !== null
+  })
   handle('launcher:open', () => openOfficialLauncher())
+
+  /** 사용자가 런처 실행 파일을 직접 골라준다 */
+  handle('launcher:pick', async () => {
+    const win = getWindow()
+    if (!win) return null
+    const res = await dialog.showOpenDialog(win, {
+      title: '마인크래프트 런처 실행 파일 선택',
+      properties: ['openFile'],
+      filters: [{ name: '실행 파일', extensions: ['exe'] }]
+    })
+    if (res.canceled || !res.filePaths[0]) return null
+    return saveLauncherPath(res.filePaths[0])
+  })
+
+  /** 창에 끌어다 놓은 파일로 지정 */
+  handle('launcher:setPath', (path: string) => saveLauncherPath(path))
   handle('join:running', () => isJoining())
 
-  handle('join:prepare', async (invite: Invite) => {
-    const settings = await getSettings()
-    const id = joinId(invite)
-    await addJoined(invite, id)
+  handle('join:prepare', (invite: Invite) => runJoin(invite))
 
-    // 클라이언트에 줄 메모리는 이 PC 사양을 보고 정한다 (서버와 달리 인스턴스 설정이 없다)
-    const result = await prepareJoin({ invite, memoryMb: recommendMemoryMb() })
-    await markJoinedPlayed(id)
-    emit.joinedChanged()
+  /**
+   * 내가 연 서버에 내가 들어갈 준비.
+   *
+   * 모드 서버를 열었으면 서버 주인도 자기 클라이언트를 맞춰야 한다.
+   * 자기 초대 코드를 자기한테 붙여넣게 하는 건 번거로우니 한 번에 처리한다.
+   * 주소는 이 PC에서 접속할 때 쓰는 localhost로 고정한다.
+   */
+  handle('join:self', async (id: string) => {
+    const instance = await getInstance(id)
+    if (!instance) throw new Error('서버를 찾을 수 없습니다')
+
+    const port = instance.publicPort ?? (await readProperties(instance.dir)).port
+    const invite = inviteFor(instance, `localhost:${port}`)
 
     /*
-     * 준비가 끝났으면 런처를 대신 띄워준다.
-     *
-     * 여기까지 왔다는 건 런처가 꺼져 있었다는 뜻이다(켜져 있으면 프로필 등록에서 멈춘다).
-     * 방금 등록한 프로필이 가장 최근에 쓴 것으로 기록돼 목록 맨 위에 오므로,
-     * 받는 사람은 뜬 창에서 플레이만 누르면 된다.
+     * CurseForge 서버팩이나 직접 넣은 폴더는 클라이언트 모드가 어디 있는지 알 수 없다.
+     * 서버 모드와 클라이언트 모드는 구성이 달라서 서버 것을 그대로 복사하면 게임이 죽는다.
+     * 로더와 프로필까지는 맞춰주고, 모드는 직접 넣도록 알린다.
      */
-    let launcherOpened = false
-    if (settings.autoOpenLauncher) {
-      launcherOpened = await openOfficialLauncher()
-        .then(() => true)
-        .catch((err: Error) => {
-          // 못 열어도 준비 자체는 끝났다. 화면의 버튼으로 직접 열 수 있다
-          joinLog(`런처를 자동으로 열지 못했습니다: ${err.message}`, 'warn')
-          return false
-        })
+    const modServer = !PLUGIN_LOADERS.includes(instance.loader.type)
+    if (modServer && !invite.pack && instance.source.kind !== 'vanilla') {
+      joinLog(
+        '이 서버는 모드팩 출처를 알 수 없어 클라이언트 모드를 자동으로 맞추지 못합니다. ' +
+          '로더와 프로필만 준비하니 모드는 직접 넣어 주세요.',
+        'warn'
+      )
     }
 
-    return { ...result, launcherOpened }
+    return runJoin(invite)
   })
 
   /* 접속 보호 */
@@ -404,16 +407,95 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
  * 그냥 흘려보내면 버튼을 눌러도 아무 일이 없는 것처럼 보인다.
  */
 async function openOfficialLauncher(): Promise<void> {
-  const exe = findOfficialLauncherExe()
+  const settings = await getSettings()
+  const exe = findOfficialLauncherExe(settings.launcherPath)
+
   if (exe) {
     const reason = await shell.openPath(exe)
     if (!reason) return
+    throw new Error(`런처를 열지 못했습니다: ${reason}`)
   }
 
-  // 설치 경로를 못 찾으면 윈도우에 등록된 minecraft:// 연결에 맡긴다
-  try {
-    await shell.openExternal('minecraft://')
-  } catch {
-    throw new Error('공식 마인크래프트 런처를 열지 못했습니다.\n시작 메뉴에서 직접 실행해 주세요.')
+  /*
+   * 예전에는 못 찾으면 minecraft:// 연결에 맡겼는데, 그 연결이 스토어 앱에 걸려 있는 PC에서는
+   * 런처 대신 스토어 페이지가 열린다. 엉뚱한 창을 띄우느니 위치를 직접 지정하게 하는 편이 낫다.
+   */
+  throw new Error(
+    '마인크래프트 런처 실행 파일을 찾지 못했습니다.\n' +
+      '런처 위치를 직접 지정해 주세요.\n' +
+      '스토어로 설치했다면 보통 C:\\XboxGames\\Minecraft Launcher\\Content\\Minecraft.exe 입니다.'
+  )
+}
+
+/** 사용자가 지정한 런처 경로를 확인하고 저장한다 */
+async function saveLauncherPath(path: string): Promise<string> {
+  if (!/\.exe$/i.test(path)) throw new Error('실행 파일(.exe)을 골라 주세요')
+  if (!existsSync(path)) throw new Error('그 위치에 파일이 없습니다')
+
+  await saveSettings({ launcherPath: path })
+  return path
+}
+
+/** 초대 정보를 만든다. 친구에게 보낼 때도, 내가 내 서버에 들어갈 때도 같은 규칙을 쓴다 */
+function inviteFor(instance: Instance, address: string): Invite {
+  /*
+   * 플러그인 서버(Paper 등)는 참가자가 모드를 맞출 필요가 없다.
+   * 그래서 "순정으로 접속하면 된다"고 적는다.
+   */
+  const pluginServer = PLUGIN_LOADERS.includes(instance.loader.type)
+
+  return {
+    name: instance.name,
+    address,
+    mcVersion: instance.mcVersion,
+    loader: pluginServer ? 'vanilla' : instance.loader.type,
+    loaderVersion: pluginServer ? null : instance.loader.version,
+    pack:
+      !pluginServer &&
+      instance.source.kind === 'modrinth' &&
+      instance.source.ref &&
+      instance.source.versionRef
+        ? {
+            source: 'modrinth',
+            projectId: instance.source.ref,
+            versionId: instance.source.versionRef,
+            title: instance.source.label
+          }
+        : null
   }
+}
+
+/** 참가 준비 한 판. 초대 코드로 들어가든 내 서버에 들어가든 같은 흐름을 탄다 */
+async function runJoin(invite: Invite): Promise<JoinResult> {
+  const settings = await getSettings()
+  const id = joinId(invite)
+  await addJoined(invite, id)
+
+  const result = await prepareJoin({
+    invite,
+    minMemoryMb: settings.clientMinMemoryMb,
+    maxMemoryMb: settings.clientMaxMemoryMb
+  })
+  await markJoinedPlayed(id)
+  emit.joinedChanged()
+
+  /*
+   * 준비가 끝났으면 런처를 대신 띄워준다.
+   *
+   * 여기까지 왔다는 건 런처가 꺼져 있었다는 뜻이다(켜져 있으면 프로필 등록에서 멈춘다).
+   * 방금 등록한 프로필이 가장 최근에 쓴 것으로 기록돼 목록 맨 위에 오므로,
+   * 뜬 창에서 플레이만 누르면 된다.
+   */
+  let launcherOpened = false
+  if (settings.autoOpenLauncher) {
+    launcherOpened = await openOfficialLauncher()
+      .then(() => true)
+      .catch((err: Error) => {
+        // 못 열어도 준비 자체는 끝났다. 화면의 버튼으로 직접 열 수 있다
+        joinLog(`런처를 자동으로 열지 못했습니다: ${err.message}`, 'warn')
+        return false
+      })
+  }
+
+  return { ...result, launcherOpened }
 }

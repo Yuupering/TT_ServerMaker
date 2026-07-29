@@ -14,6 +14,8 @@ interface Props {
   onBack: () => void
   /** 인스턴스 설정을 바꾼 뒤 목록을 다시 읽어오기 위한 것 */
   onRefresh: () => void
+  /** 내가 연 이 서버에 내가 들어갈 준비를 시작한다 */
+  onJoinSelf: () => void
 }
 
 type Tab = 'console' | 'network' | 'addons' | 'players' | 'security' | 'settings' | 'backup'
@@ -31,7 +33,8 @@ export default function Dashboard({
   instance,
   status,
   onBack,
-  onRefresh
+  onRefresh,
+  onJoinSelf
 }: Props): React.JSX.Element {
   const [tab, setTab] = useState<Tab>('console')
   const [error, setError] = useState<string | null>(null)
@@ -41,6 +44,11 @@ export default function Dashboard({
   const state = mine?.state ?? 'stopped'
   const running = state === 'running'
   const busy = state === 'starting' || state === 'stopping' || pending
+
+  const joinSelf = useCallback(() => {
+    setError(null)
+    onJoinSelf()
+  }, [onJoinSelf])
 
   const toggle = useCallback(async () => {
     setError(null)
@@ -78,6 +86,10 @@ export default function Dashboard({
           </div>
         </div>
         <div className="spacer" />
+        {/* 모드 서버를 열었으면 서버 주인도 클라이언트를 맞춰야 들어갈 수 있다 */}
+        <button className="btn" onClick={joinSelf} disabled={busy}>
+          내 클라이언트 준비
+        </button>
         <button
           className={`btn ${running ? 'danger' : 'primary'}`}
           onClick={() => void toggle()}

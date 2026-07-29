@@ -8,7 +8,7 @@ import { hasOfficialLauncher, paths } from './paths'
 import { ensureLoader } from './minecraft/loader'
 import { installModpackFromModrinth } from './minecraft/mods'
 import { addServerToList } from './minecraft/nbt'
-import { registerProfile } from './minecraft/profile'
+import { isLauncherWindowOpen, registerProfile } from './minecraft/profile'
 
 /**
  * 남이 연 서버에 들어갈 준비.
@@ -42,7 +42,8 @@ function report(step: JoinStatus['step'], message: string, ratio: number | null 
 
 export interface JoinArgs {
   invite: Invite
-  memoryMb: number
+  minMemoryMb: number
+  maxMemoryMb: number
 }
 
 /** 공식 런처에서 바로 고를 수 있게 준비한다 */
@@ -106,12 +107,25 @@ export async function prepareJoin(args: JoinArgs): Promise<JoinResult> {
     })
 
     report('ready', '런처에 프로필을 등록하는 중')
+
+    /*
+     * 창이 열려 있으면 런처가 자기 목록으로 나중에 덮어쓸 수 있다.
+     * 막지는 않는다. 등록이 실제로 남았는지는 registerProfile이 확인하고,
+     * 나중에 사라지는 경우를 대비해 미리 알려만 둔다.
+     */
+    if (await isLauncherWindowOpen()) {
+      joinLog(
+        '공식 런처 창이 열려 있습니다. 프로필이 안 보이면 런처를 껐다 다시 켜 주세요.',
+        'warn'
+      )
+    }
     const profileName = await registerProfile({
       serverId: joinId(invite),
       name: invite.name || invite.address,
       versionId,
       gameDir,
-      memoryMb: args.memoryMb
+      minMemoryMb: args.minMemoryMb,
+      maxMemoryMb: args.maxMemoryMb
     })
 
     joinLog(`준비 완료. 공식 런처에서 "${profileName}"을 고르면 됩니다.`, 'system')

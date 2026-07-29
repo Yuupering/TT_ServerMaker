@@ -1,5 +1,8 @@
-import { mkdir, readdir, rm } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
+import { createHash } from 'node:crypto'
+import { createReadStream } from 'node:fs'
+import { pipeline } from 'node:stream/promises'
 import type { LoaderType } from '@shared/types'
 import { assertPackHost, downloadFile, fetchJson } from '../util/download'
 import { extractZip, readZipText } from '../util/archive'
@@ -44,6 +47,8 @@ export interface PackResult {
   loader: LoaderType
   loaderVersion: string | null
   name?: string
+  /** 이 팩이 요구하는 파일들. 표시를 남기는 데 쓴다 */
+  files?: MrpackIndex['files']
 }
 
 function loaderFromDependencies(deps: Record<string, string>): {
@@ -57,13 +62,82 @@ function loaderFromDependencies(deps: Record<string, string>): {
   return { loader: 'vanilla', version: null }
 }
 
-/** 서버가 바뀌면 예전 모드가 남아 충돌하므로 비우고 시작한다 */
-async function clearMods(gameDir: string): Promise<void> {
+/**
+ * 이 폴더에 어떤 팩을 깔아뒀는지 적어두는 표시.
+ *
+ * 이게 없으면 "준비하기"를 누를 때마다 모드를 전부 지우고 처음부터 다시 받는다.
+ * 팩이 그대로인데 수백 MB를 다시 받는 건 기다릴 이유가 없는 시간이다.
+ */
+const MARKER = '.tt-pack.json'
+
+interface PackMarker {
+  projectId: string
+  versionId: string
+  mcVersion: string
+  loader: LoaderType
+  loaderVersion: string | null
+  name?: string
+  /** 팩이 요구하는 파일들. 그대로 남아 있는지 확인하는 데 쓴다 */
+  files: { path: string; size?: number }[]
+}
+
+async function readMarker(gameDir: string): Promise<PackMarker | null> {
+  try {
+    return JSON.parse(await readFile(join(gameDir, MARKER), 'utf8')) as PackMarker
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 표시해둔 팩이 지금도 그대로인지 확인한다.
+ * 크기만 본다. 해시까지 다 돌리면 수백 MB를 매번 읽어야 해서 빨리 끝나는 의미가 없다.
+ */
+async function markerStillValid(gameDir: string, marker: PackMarker): Promise<boolean> {
+  for (const f of marker.files) {
+    const st = await stat(join(gameDir, f.path)).catch(() => null)
+    if (!st) return false
+    if (f.size !== undefined && st.size !== f.size) return false
+  }
+  return true
+}
+
+/** 파일이 이미 팩이 원하는 그것인지 (다시 받지 않아도 되는지) */
+async function alreadyCorrect(
+  path: string,
+  hashes: { sha1?: string; sha512?: string },
+  size?: number
+): Promise<boolean> {
+  const st = await stat(path).catch(() => null)
+  if (!st) return false
+  if (size !== undefined && st.size !== size) return false
+
+  const algo = hashes.sha512 ? 'sha512' : hashes.sha1 ? 'sha1' : null
+  if (!algo) return size !== undefined
+
+  const expected = (hashes.sha512 ?? hashes.sha1 ?? '').toLowerCase()
+  try {
+    const hash = createHash(algo)
+    await pipeline(createReadStream(path), hash)
+    return hash.digest('hex') === expected
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 새 팩에 없는 모드만 지운다.
+ *
+ * 예전에는 통째로 비우고 시작했는데, 그러면 팩이 그대로여도 전부 다시 받아야 했다.
+ * 서버를 바꿔 끼웠을 때 예전 모드가 남아 충돌하는 것만 막으면 된다.
+ */
+async function pruneMods(gameDir: string, keep: Set<string>): Promise<void> {
   const modsDir = join(gameDir, 'mods')
   const files = await readdir(modsDir).catch(() => [] as string[])
   await Promise.all(
     files
       .filter((f) => f.toLowerCase().endsWith('.jar'))
+      .filter((f) => !keep.has(`mods/${f}`))
       .map((f) => rm(join(modsDir, f), { force: true }).catch(() => undefined))
   )
 }
@@ -74,6 +148,24 @@ export async function installModpackFromModrinth(
   gameDir: string,
   onProgress?: ProgressFn
 ): Promise<PackResult> {
+  /*
+   * 같은 팩을 이미 깔아둔 폴더면 아무것도 하지 않는다.
+   * 준비하기를 다시 누르는 이유는 대개 런처를 띄우려는 것이지 팩을 새로 받으려는 게 아니다.
+   */
+  const marker = await readMarker(gameDir)
+  if (marker && marker.projectId === projectId && marker.versionId === versionId) {
+    onProgress?.(0, 1, '이미 맞춰둔 모드팩을 확인하는 중')
+    if (await markerStillValid(gameDir, marker)) {
+      onProgress?.(1, 1, '모드팩은 이미 맞춰져 있습니다')
+      return {
+        mcVersion: marker.mcVersion,
+        loader: marker.loader,
+        loaderVersion: marker.loaderVersion,
+        name: marker.name
+      }
+    }
+  }
+
   onProgress?.(0, 1, '모드팩 정보를 확인하는 중')
 
   const version = await fetchJson<ModrinthVersion>(
@@ -94,7 +186,26 @@ export async function installModpackFromModrinth(
   const result = await installMrpack(packPath, gameDir, onProgress)
   await rm(packPath, { force: true })
 
-  return { ...result, name: result.name ?? version.name }
+  const name = result.name ?? version.name
+
+  // 다음에 같은 팩으로 다시 누르면 이 표시를 보고 통째로 건너뛴다
+  const record: PackMarker = {
+    projectId,
+    versionId,
+    mcVersion: result.mcVersion,
+    loader: result.loader,
+    loaderVersion: result.loaderVersion,
+    name,
+    files: (result.files ?? []).map((f) => ({
+      path: f.path.replace(/\\/g, '/'),
+      size: f.fileSize
+    }))
+  }
+  await writeFile(join(gameDir, MARKER), JSON.stringify(record, null, 2), 'utf8').catch(
+    () => undefined
+  )
+
+  return { mcVersion: result.mcVersion, loader: result.loader, loaderVersion: result.loaderVersion, name }
 }
 
 export async function installMrpack(
@@ -113,12 +224,15 @@ export async function installMrpack(
 
   // 서버 전용으로 표시된 모드는 클라이언트에 넣지 않는다
   const targets = index.files.filter((f) => (f.env?.client ?? 'required') !== 'unsupported')
+  const wanted = new Set(targets.map((f) => f.path.replace(/\\/g, '/')))
 
-  await clearMods(gameDir)
+  // 이 팩에 없는 예전 모드만 걷어낸다. 그대로 쓸 수 있는 건 남겨서 다시 받지 않는다
+  await pruneMods(gameDir, wanted)
 
   let done = 0
+  let reused = 0
   const total = targets.length
-  onProgress?.(0, total, `모드 ${total}개 내려받는 중`)
+  onProgress?.(0, total, `모드 ${total}개 확인 중`)
 
   let cursor = 0
   const errors: string[] = []
@@ -137,6 +251,14 @@ export async function installMrpack(
 
       const dest = join(gameDir, rel)
       await mkdir(join(dest, '..'), { recursive: true })
+
+      // 이미 같은 파일이 있으면 건너뛴다. 팩을 갱신해도 대개 대부분은 그대로다
+      if (await alreadyCorrect(dest, entry.hashes, entry.fileSize)) {
+        reused++
+        done++
+        onProgress?.(done, total, `모드 확인 중 (${done}/${total})`)
+        continue
+      }
 
       const url = entry.downloads[0]
       if (!url) {
@@ -174,11 +296,15 @@ export async function installMrpack(
     )
   }
 
-  onProgress?.(total, total, '모드팩 설정 적용 중')
+  onProgress?.(
+    total,
+    total,
+    reused === total ? '모드는 그대로 쓸 수 있습니다' : '모드팩 설정 적용 중'
+  )
 
   // overrides가 클라이언트 설정, client-overrides가 클라이언트 전용 덮어쓰기다
   await extractZip(packPath, gameDir, { subdir: 'overrides', strip: true })
   await extractZip(packPath, gameDir, { subdir: 'client-overrides', strip: true })
 
-  return { mcVersion, loader, loaderVersion, name: index.name }
+  return { mcVersion, loader, loaderVersion, name: index.name, files: targets }
 }

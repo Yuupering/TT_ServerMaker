@@ -7,7 +7,10 @@ const DEFAULT_SETTINGS: Omit<AppSettings, 'dataRoot'> = {
   autoRestart: true,
   backupIntervalMin: 60,
   backupKeep: 10,
-  autoOpenLauncher: true
+  autoOpenLauncher: true,
+  launcherPath: null,
+  clientMinMemoryMb: 1024,
+  clientMaxMemoryMb: 0
 }
 
 let settingsCache: AppSettings | null = null
@@ -77,7 +80,9 @@ export async function getSettings(): Promise<AppSettings> {
   settingsCache = {
     ...DEFAULT_SETTINGS,
     ...stored,
-    dataRoot: stored.dataRoot ?? dataRoot()
+    dataRoot: stored.dataRoot ?? dataRoot(),
+    // 한 번도 정한 적 없으면 이 PC 사양을 보고 채운다
+    clientMaxMemoryMb: stored.clientMaxMemoryMb || recommendMemoryMb()
   }
   return settingsCache
 }
