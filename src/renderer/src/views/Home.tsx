@@ -14,6 +14,7 @@ interface Props {
   instances: Instance[]
   status: ServerStatus | null
   onCreate: () => void
+  onJoin: () => void
   onOpen: (id: string) => void
 }
 
@@ -41,7 +42,13 @@ function formatSize(bytes: number): string {
   return `${(bytes / 1024).toFixed(0)}KB`
 }
 
-export default function Home({ instances, status, onCreate, onOpen }: Props): React.JSX.Element {
+export default function Home({
+  instances,
+  status,
+  onCreate,
+  onJoin,
+  onOpen
+}: Props): React.JSX.Element {
   const [pathInfo, setPathInfo] = useState<{ root: string; nonAscii: boolean } | null>(null)
   const [sizes, setSizes] = useState<Record<string, number>>({})
   const [orphans, setOrphans] = useState<Orphan[]>([])
@@ -80,6 +87,9 @@ export default function Home({ instances, status, onCreate, onOpen }: Props): Re
       <div className="topbar">
         <h1>{APP_TITLE}</h1>
         <div className="spacer" />
+        <button className="btn" onClick={onJoin}>
+          친구 서버 참가하기
+        </button>
         {instances.length > 0 && (
           <button className="btn primary" onClick={onCreate}>
             새 서버 만들기
@@ -90,15 +100,23 @@ export default function Home({ instances, status, onCreate, onOpen }: Props): Re
       <div className="content">
         {instances.length === 0 ? (
           <div className="empty">
-            <h2>서버를 하나 만들어 봅시다</h2>
+            <h2>무엇부터 해볼까요</h2>
             <p>
-              무엇으로 열지만 고르면 자바 설치부터 서버 구성까지 알아서 합니다.
+              서버를 열면 자바 설치부터 구성과 포트 열기까지 알아서 합니다.
               <br />
-              따로 준비할 건 없습니다.
+              친구가 연 서버에 들어갈 때도 모드팩을 대신 맞춰 드립니다.
             </p>
-            <button className="btn primary big" onClick={onCreate}>
-              서버 만들기
-            </button>
+            <div className="row" style={{ justifyContent: 'center', gap: 10 }}>
+              <button className="btn primary big" onClick={onCreate}>
+                서버 만들기
+              </button>
+              <button className="btn big" onClick={onJoin}>
+                친구 서버 참가하기
+              </button>
+            </div>
+            <p className="muted small" style={{ marginTop: 14 }}>
+              친구에게 초대 코드를 받았다면 오른쪽을 누르세요.
+            </p>
           </div>
         ) : (
           <>

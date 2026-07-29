@@ -2,7 +2,7 @@ import { BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { rm } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 import { PLUGIN_LOADERS } from '@shared/types'
-import { encodeInvite } from '@shared/invite'
+import { decodeInvite, encodeInvite } from '@shared/invite'
 import type {
   AppSettings,
   Invite,
@@ -26,7 +26,7 @@ import {
 import { checkJavaFor, detectSystemJava, javaStatus } from './java'
 import { listPaperVersions, listVanillaVersions, serverFileInfo } from './loader'
 import { modrinthVersions, searchModrinth } from './pack'
-import { pathHasNonAscii, paths } from './paths'
+import { hasOfficialLauncher, pathHasNonAscii, paths } from './paths'
 import {
   PROPERTY_CHOICES,
   readProperties,
@@ -36,9 +36,13 @@ import {
 } from './properties'
 import { serverManager } from './server'
 import {
+  addJoined,
   getInstance,
   getInstances,
+  getJoined,
   getSettings,
+  markJoinedPlayed,
+  removeJoined,
   maxMemoryMb,
   recommendMemoryMb,
   saveSettings
@@ -55,6 +59,9 @@ import {
 } from './players'
 import { addAddons, addonDir, addonKindFor, listAddons, removeAddon, toggleAddon } from './addons'
 import { DEFAULT_GUARD, guard } from './guard'
+import { isJoining, joinId, prepareJoin } from './join'
+import { findOfficialLauncherExe } from './minecraft/profile'
+import { emit, joinLog } from './events'
 
 /**
  * 백신이 손댔을 때 지워두면 다시 받아 복구되는 것들.
@@ -322,6 +329,48 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     return { invite, code: encodeInvite(invite) }
   })
 
+  /* 참가 — 남이 연 서버에 들어갈 준비 */
+  handle('invite:decode', (code: string) => decodeInvite(code))
+  handle('joined:list', () => getJoined())
+  handle('joined:remove', async (id: string) => {
+    await removeJoined(id)
+    emit.joinedChanged()
+  })
+  handle('launcher:available', () => hasOfficialLauncher())
+  handle('launcher:open', () => openOfficialLauncher())
+  handle('join:running', () => isJoining())
+
+  handle('join:prepare', async (invite: Invite) => {
+    const settings = await getSettings()
+    const id = joinId(invite)
+    await addJoined(invite, id)
+
+    // 클라이언트에 줄 메모리는 이 PC 사양을 보고 정한다 (서버와 달리 인스턴스 설정이 없다)
+    const result = await prepareJoin({ invite, memoryMb: recommendMemoryMb() })
+    await markJoinedPlayed(id)
+    emit.joinedChanged()
+
+    /*
+     * 준비가 끝났으면 런처를 대신 띄워준다.
+     *
+     * 여기까지 왔다는 건 런처가 꺼져 있었다는 뜻이다(켜져 있으면 프로필 등록에서 멈춘다).
+     * 방금 등록한 프로필이 가장 최근에 쓴 것으로 기록돼 목록 맨 위에 오므로,
+     * 받는 사람은 뜬 창에서 플레이만 누르면 된다.
+     */
+    let launcherOpened = false
+    if (settings.autoOpenLauncher) {
+      launcherOpened = await openOfficialLauncher()
+        .then(() => true)
+        .catch((err: Error) => {
+          // 못 열어도 준비 자체는 끝났다. 화면의 버튼으로 직접 열 수 있다
+          joinLog(`런처를 자동으로 열지 못했습니다: ${err.message}`, 'warn')
+          return false
+        })
+    }
+
+    return { ...result, launcherOpened }
+  })
+
   /* 접속 보호 */
   handle('guard:status', () => guard.getStatus())
   handle('guard:unblock', (ip: string) => guard.unblock(ip))
@@ -346,4 +395,25 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     return restoreBackup(instance, file)
   })
   handle('backup:delete', (id: string, file: string) => deleteBackup(id, file))
+}
+
+/**
+ * 공식 마인크래프트 런처를 띄운다.
+ *
+ * openPath는 실패해도 예외 대신 사유 문자열을 돌려준다.
+ * 그냥 흘려보내면 버튼을 눌러도 아무 일이 없는 것처럼 보인다.
+ */
+async function openOfficialLauncher(): Promise<void> {
+  const exe = findOfficialLauncherExe()
+  if (exe) {
+    const reason = await shell.openPath(exe)
+    if (!reason) return
+  }
+
+  // 설치 경로를 못 찾으면 윈도우에 등록된 minecraft:// 연결에 맡긴다
+  try {
+    await shell.openExternal('minecraft://')
+  } catch {
+    throw new Error('공식 마인크래프트 런처를 열지 못했습니다.\n시작 메뉴에서 직접 실행해 주세요.')
+  }
 }

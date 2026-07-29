@@ -1,6 +1,7 @@
 import { BrowserWindow } from 'electron'
 import type {
   GuardStatus,
+  JoinStatus,
   LogLine,
   NetStatus,
   ProgressEvent,
@@ -37,7 +38,27 @@ export const emit = {
   },
   instancesChanged(): void {
     send('evt:instances', null)
+  },
+
+  /*
+   * 참가 준비 쪽은 채널을 따로 쓴다.
+   * 서버 상태(evt:status)나 서버 콘솔 로그(evt:log)와 뜻이 달라서,
+   * 같은 채널을 나눠 쓰면 콘솔에 참가 진행 로그가 섞여 들어간다.
+   */
+  joinStatus(s: JoinStatus): void {
+    send('evt:join', s)
+  },
+  joinLog(line: LogLine): void {
+    send('evt:joinlog', line)
+  },
+  joinedChanged(): void {
+    send('evt:joined', null)
   }
+}
+
+/** 참가 준비 진행 기록 */
+export function joinLog(text: string, level: LogLine['level'] = 'info'): void {
+  emit.joinLog({ ts: Date.now(), level, text })
 }
 
 /**

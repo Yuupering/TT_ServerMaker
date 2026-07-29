@@ -59,12 +59,47 @@ export function ensure(dir: string): string {
   return dir
 }
 
+/**
+ * 공식 마인크래프트 런처가 쓰는 폴더.
+ *
+ * 참가 준비는 여기를 기준으로 한다. 버전과 라이브러리, 리소스를 여기에 두면
+ * 공식 런처가 이미 받아둔 것을 그대로 쓸 수 있어서 새로 받을 양이 크게 준다.
+ */
+export function minecraftRoot(): string {
+  const appData = process.env.APPDATA
+  if (appData) return join(appData, '.minecraft')
+  return join(dataRoot(), '.minecraft')
+}
+
+export function hasOfficialLauncher(): boolean {
+  return existsSync(join(minecraftRoot(), 'launcher_profiles.json'))
+}
+
 export const paths = {
   get root(): string {
     return ensure(dataRoot())
   },
   get instances(): string {
     return ensure(join(dataRoot(), 'instances'))
+  },
+
+  /* ── 참가 쪽 ── */
+
+  /** 로더 설치 도구가 잠깐 쓰는 작업 폴더 */
+  get clientShared(): string {
+    return ensure(join(dataRoot(), 'client-shared'))
+  },
+  /** 버전 폴더는 공식 런처와 공유한다 */
+  get versions(): string {
+    return ensure(join(minecraftRoot(), 'versions'))
+  },
+  /** 참가한 서버 목록 */
+  get joinedFile(): string {
+    return join(dataRoot(), 'joined.json')
+  },
+  /** 참가한 서버별 게임 폴더 (mods, config, saves가 여기 들어간다) */
+  clientDir(id: string): string {
+    return ensure(join(dataRoot(), 'clients', id))
   },
   get java(): string {
     return ensure(join(dataRoot(), 'java'))

@@ -1,12 +1,13 @@
 import { readFile, writeFile, rename } from 'node:fs/promises'
 import { totalmem } from 'node:os'
-import type { AppSettings, Instance } from '@shared/types'
+import type { AppSettings, Instance, Invite, JoinedServer } from '@shared/types'
 import { dataRoot, paths } from './paths'
 
 const DEFAULT_SETTINGS: Omit<AppSettings, 'dataRoot'> = {
   autoRestart: true,
   backupIntervalMin: 60,
-  backupKeep: 10
+  backupKeep: 10,
+  autoOpenLauncher: true
 }
 
 let settingsCache: AppSettings | null = null
@@ -134,4 +135,39 @@ export function recommendMemoryMb(): number {
 export function maxMemoryMb(): number {
   const totalMb = Math.floor(totalmem() / 1024 / 1024)
   return Math.max(2048, Math.floor((totalMb - 2048) / 512) * 512)
+}
+
+/* ---------- 참가해둔 서버 ---------- */
+
+let joinedCache: JoinedServer[] | null = null
+
+export async function getJoined(): Promise<JoinedServer[]> {
+  if (joinedCache) return joinedCache
+  joinedCache = await readJson<JoinedServer[]>(paths.joinedFile, [])
+  return joinedCache
+}
+
+/** 같은 주소는 같은 항목으로 본다 (초대 코드를 다시 받아도 하나로 유지) */
+export async function addJoined(invite: Invite, id: string): Promise<JoinedServer> {
+  const list = await getJoined()
+  const existing = list.find((s) => s.id === id)
+  const entry: JoinedServer = existing
+    ? { ...existing, ...invite, id }
+    : { ...invite, id, addedAt: Date.now() }
+
+  joinedCache = existing ? list.map((s) => (s.id === id ? entry : s)) : [...list, entry]
+  await writeJson(paths.joinedFile, joinedCache)
+  return entry
+}
+
+export async function removeJoined(id: string): Promise<void> {
+  const list = await getJoined()
+  joinedCache = list.filter((s) => s.id !== id)
+  await writeJson(paths.joinedFile, joinedCache)
+}
+
+export async function markJoinedPlayed(id: string): Promise<void> {
+  const list = await getJoined()
+  joinedCache = list.map((s) => (s.id === id ? { ...s, lastPlayedAt: Date.now() } : s))
+  await writeJson(paths.joinedFile, joinedCache)
 }

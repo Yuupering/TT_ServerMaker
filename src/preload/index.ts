@@ -13,6 +13,9 @@ import type {
   Invite,
   JavaAvailability,
   JavaInfo,
+  JoinedServer,
+  JoinResult,
+  JoinStatus,
   LoaderType,
   ServerFileInfo,
   LogLine,
@@ -142,13 +145,27 @@ const api = {
     restore: (id: string, file: string) => invoke<void>('backup:restore', id, file),
     remove: (id: string, file: string) => invoke<void>('backup:delete', id, file)
   },
+  /* 참가 — 남이 연 서버에 들어갈 준비 */
+  join: {
+    decode: (code: string) => invoke<Invite>('invite:decode', code),
+    list: () => invoke<JoinedServer[]>('joined:list'),
+    remove: (id: string) => invoke<void>('joined:remove', id),
+    prepare: (invite: Invite) => invoke<JoinResult>('join:prepare', invite),
+    running: () => invoke<boolean>('join:running'),
+    launcherAvailable: () => invoke<boolean>('launcher:available'),
+    openLauncher: () => invoke<void>('launcher:open')
+  },
+
   events: {
     onProgress: (cb: (e: ProgressEvent) => void) => on<ProgressEvent>('evt:progress', cb),
     onLog: (cb: (e: LogLine) => void) => on<LogLine>('evt:log', cb),
     onStatus: (cb: (e: ServerStatus) => void) => on<ServerStatus>('evt:status', cb),
     onNet: (cb: (e: NetStatus) => void) => on<NetStatus>('evt:net', cb),
     onGuard: (cb: (e: GuardStatus) => void) => on<GuardStatus>('evt:guard', cb),
-    onInstancesChanged: (cb: () => void) => on<null>('evt:instances', cb)
+    onInstancesChanged: (cb: () => void) => on<null>('evt:instances', cb),
+    onJoinStatus: (cb: (e: JoinStatus) => void) => on<JoinStatus>('evt:join', cb),
+    onJoinLog: (cb: (e: LogLine) => void) => on<LogLine>('evt:joinlog', cb),
+    onJoinedChanged: (cb: () => void) => on<null>('evt:joined', cb)
   }
 }
 

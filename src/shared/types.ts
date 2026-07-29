@@ -209,6 +209,8 @@ export interface AppSettings {
   /** 자동 백업 주기(분). 0이면 끔 */
   backupIntervalMin: number
   backupKeep: number
+  /** 참가 준비가 끝나면 공식 마인크래프트 런처를 알아서 띄울지 */
+  autoOpenLauncher: boolean
 }
 
 export interface PlayerEntry {
@@ -232,6 +234,35 @@ export interface Invite {
     versionId: string
     title?: string
   } | null
+}
+
+/* ---------- 참가 (초대 코드로 남의 서버 들어가기) ---------- */
+
+export type JoinStep = 'idle' | 'java' | 'loader' | 'mods' | 'ready' | 'error'
+
+export interface JoinStatus {
+  step: JoinStep
+  message: string
+  /** 0~1, 모르면 null */
+  ratio: number | null
+  error?: string | null
+}
+
+/** 공식 런처에서 고를 수 있게 준비를 마친 결과 */
+export interface JoinResult {
+  /** 공식 런처에서 고를 프로필 이름 */
+  profileName: string
+  versionId: string
+  gameDir: string
+  /** 준비를 마치고 공식 런처를 실제로 띄웠는지 */
+  launcherOpened?: boolean
+}
+
+/** 참가해둔 서버 (다음에 다시 들어갈 때 목록에서 고른다) */
+export interface JoinedServer extends Invite {
+  id: string
+  addedAt: number
+  lastPlayedAt?: number
 }
 
 export type AddonKind = 'mod' | 'plugin'
