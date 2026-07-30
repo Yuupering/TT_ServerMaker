@@ -69,6 +69,7 @@ export default function Create({ onCancel, onCreated }: Props): React.JSX.Elemen
 
   /* 내 컴퓨터에서 가져오기 */
   const [filePath, setFilePath] = useState<string | null>(null)
+  const [dragOver, setDragOver] = useState(false)
 
   /* 직접 고르기 */
   const [mcVersions, setMcVersions] = useState<string[]>([])
@@ -231,14 +232,21 @@ export default function Create({ onCancel, onCreated }: Props): React.JSX.Elemen
     [name]
   )
 
+  /** 파일을 고르든 끌어다 놓든 같은 처리를 탄다 */
+  const useFile = useCallback(
+    (path: string) => {
+      setFilePath(path)
+      if (!name.trim()) {
+        setName(fileName(path).replace(/\.(mrpack|zip)$/i, ''))
+      }
+    },
+    [name]
+  )
+
   const pickFile = useCallback(async () => {
     const path = await window.api.packs.pickFile()
-    if (!path) return
-    setFilePath(path)
-    if (!name.trim()) {
-      setName(fileName(path).replace(/\.(mrpack|zip)$/i, ''))
-    }
-  }, [name])
+    if (path) useFile(path)
+  }, [useFile])
 
   const pickFolder = useCallback(async () => {
     const path = await window.api.packs.pickFolder()
@@ -437,6 +445,49 @@ export default function Create({ onCancel, onCreated }: Props): React.JSX.Elemen
               가진 파일로 만들기
               <span className="sub">.mrpack, CurseForge 서버팩 zip, 서버 폴더</span>
             </h2>
+            <div
+              className={`dropzone ${dragOver ? 'over' : ''} ${filePath ? 'filled' : ''}`}
+              onDragOver={(e) => {
+                e.preventDefault()
+                setDragOver(true)
+              }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={(e) => {
+                e.preventDefault()
+                setDragOver(false)
+
+                const file = e.dataTransfer.files[0]
+                if (!file) return
+
+                // Electron 32부터 File.path가 사라져서 preload를 거쳐 경로를 얻는다
+                const path = window.api.addons.pathOf(file)
+                if (!path) return
+
+                if (!/\.(mrpack|zip)$/i.test(path)) {
+                  setError('.mrpack이나 zip 파일을 넣어 주세요. 폴더는 아래 버튼으로 골라 주세요.')
+                  return
+                }
+                setError(null)
+                useFile(path)
+              }}
+            >
+              {filePath ? (
+                <>
+                  <div style={{ wordBreak: 'break-all' }}>{fileName(filePath)}</div>
+                  <div className="muted small" style={{ marginTop: 6 }}>
+                    다른 걸 넣으려면 여기에 다시 끌어다 놓으세요
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div>모드팩 파일을 여기에 끌어다 놓으세요</div>
+                  <div className="muted small" style={{ marginTop: 6 }}>
+                    .mrpack 또는 CurseForge 서버팩 zip
+                  </div>
+                </>
+              )}
+            </div>
+
             <div className="row wrap">
               <button className="btn" onClick={() => void pickFile()}>
                 파일 선택
